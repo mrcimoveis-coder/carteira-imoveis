@@ -32,7 +32,7 @@ def conectar_google_sheets():
     
     credentials = Credentials.from_service_account_info(credenciais_dict, scopes=SCOPES)
     client = gspread.authorize(credentials)
-    return client.open("Carteira_Imoveis_MRC").sheet1
+    return client.open_by_key("1yJBZZ0nDnJKsf31H6sfG_vve19TJIRfGIZ4ATCKQS7k").sheet1
 
 # -----------------------------------------------------------------------------
 # CONTROLE DE ACESSO (SENHA DE PROTEÇÃO INTERNA)
