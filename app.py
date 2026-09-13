@@ -5,10 +5,19 @@ from google.oauth2.service_account import Credentials
 from datetime import datetime
 
 # -----------------------------------------------------------------------------
-# CONFIGURAÇÃO DE ACESSO E CONEXÃO COM GOOGLE SHEETS
+# CONFIGURAÇÃO DA PÁGINA E LOGOMARCA
 # -----------------------------------------------------------------------------
 st.set_page_config(page_title="Carteira de Imóveis | MRC Imóveis", page_icon="🏢", layout="wide")
 
+# Exibe a logomarca da MRC no topo de todas as telas
+try:
+    st.image("https://raw.githubusercontent.com/mrcimoveis-coder/intranet/main/logo.jpeg", width=260)
+except Exception:
+    pass
+
+# -----------------------------------------------------------------------------
+# CONEXÃO COM GOOGLE SHEETS
+# -----------------------------------------------------------------------------
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive"
@@ -28,15 +37,15 @@ def conectar_google_sheets():
 # -----------------------------------------------------------------------------
 # CONTROLE DE ACESSO (SENHA DE PROTEÇÃO INTERNA)
 # -----------------------------------------------------------------------------
-SENHA_CORRETA = "431360"  # Você pode alterar a senha interna aqui
+SENHA_CORRETA = "431360"  # Nova senha de acesso atualizada
 
 if "autenticado" not in st.session_state:
     st.session_state.autenticado = False
 
 if not st.session_state.autenticado:
-    st.title("🔒 Acesso Restrito — MRC Imóveis")
+    st.title("🔒 Acesso Restrito — Carteira")
     senha_input = st.text_input("Digite a senha de acesso interno:", type="password")
-    if st.button("Entrar"):
+    if st.button("Entrar", type="primary"):
         if senha_input == SENHA_CORRETA:
             st.session_state.autenticado = True
             st.rerun()
