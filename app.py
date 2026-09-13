@@ -65,7 +65,8 @@ except Exception as e:
 st.title("🏢 Carteira de Imóveis — Gestão Comercial")
 st.write("Centralização de acervo, proprietários e acompanhamento de negociações.")
 
-aba_cadastro, aba_consulta = st.tabs(["➕ Cadastrar Novo Imóvel", "🔍 Consultar e Pesquisar Carteira"])
+# Adicionada a 3ª Aba para Edição/Exclusão
+aba_cadastro, aba_consulta, aba_editar = st.tabs(["➕ Cadastrar Novo Imóvel", "🔍 Consultar e Pesquisar Carteira", "✏️ Editar e Excluir"])
 
 # -----------------------------------------------------------------------------
 # ABA 1: CADASTRAR NOVO IMÓVEL
@@ -134,23 +135,35 @@ with aba_consulta:
             with col_f1:
                 busca_texto = st.text_input("🔎 Pesquisar (Nome, Endereço ou Bairro):")
             with col_f2:
-                filtro_finalidade = st.multiselect("Filtrar Finalidade:", options=df["Finalidade"].unique().tolist(), default=df["Finalidade"].unique().tolist())
+                # Verifica se a coluna Finalidade existe para evitar erros
+                if "Finalidade" in df.columns:
+                    filtro_finalidade = st.multiselect("Filtrar Finalidade:", options=df["Finalidade"].unique().tolist(), default=df["Finalidade"].unique().tolist())
+                else:
+                    filtro_finalidade = []
             with col_f3:
-                filtro_status = st.multiselect("Filtrar Status:", options=df["Status"].unique().tolist(), default=df["Status"].unique().tolist())
+                # Verifica se a coluna Status existe
+                if "Status" in df.columns:
+                    filtro_status = st.multiselect("Filtrar Status:", options=df["Status"].unique().tolist(), default=df["Status"].unique().tolist())
+                else:
+                    filtro_status = []
 
-            # Aplicação dos Filtros
-            df_filtrado = df[
-                (df["Finalidade"].isin(filtro_finalidade)) &
-                (df["Status"].isin(filtro_status))
-            ]
+            # Aplicação dos Filtros se as colunas existirem
+            if "Finalidade" in df.columns and "Status" in df.columns:
+                df_filtrado = df[
+                    (df["Finalidade"].isin(filtro_finalidade)) &
+                    (df["Status"].isin(filtro_status))
+                ]
+            else:
+                df_filtrado = df
 
             if busca_texto:
                 termo = busca_texto.lower()
-                df_filtrado = df_filtrado[
-                    df_filtrado["Proprietario_Nome"].astype(str).str.lower().str.contains(termo) |
-                    df_filtrado["Endereco_Imovel"].astype(str).str.lower().str.contains(termo) |
-                    df_filtrado["Bairro"].astype(str).str.lower().str.contains(termo)
-                ]
+                # Verifica quais colunas existem para a busca
+                cols_busca = [col for col in ["Proprietario_Nome", "Endereco_Imovel", "Bairro"] if col in df.columns]
+                
+                if cols_busca:
+                    # Filtra em todas as colunas disponíveis para busca
+                    df_filtrado = df_filtrado[df_filtrado[cols_busca].apply(lambda row: row.astype(str).str.lower().str.contains(termo).any(), axis=1)]
 
             st.write(f"**Total de Imóveis encontrados:** {len(df_filtrado)}")
             
@@ -166,3 +179,70 @@ with aba_consulta:
 
     except Exception as e:
         st.error(f"❌ Erro ao carregar a carteira: {e}")
+
+# -----------------------------------------------------------------------------
+# ABA 3: EDIÇÃO E EXCLUSÃO (NOVO)
+# -----------------------------------------------------------------------------
+with aba_editar:
+    st.subheader("Alterar ou Excluir Registro")
+    
+    try:
+        dados_raw = sheet.get_all_records()
+        if dados_raw:
+            df = pd.DataFrame(dados_raw)
+            # Confirma se existe a coluna Endereço (baseado na estrutura do Cadastro Rápido)
+            # O get_all_records puxa os cabeçalhos como chaves. Precisamos ver o nome exato.
+            # Baseado no append_row, a coluna 5 é o Endereço (índice 4 no python)
+            # Mas o pandas usa o nome do cabeçalho. Vamos assumir que a coluna 5 se chama "Endereco_Imovel"
+            
+            nome_coluna_endereco = df.columns[4] if len(df.columns) > 4 else None
+            
+            if nome_coluna_endereco:
+                lista_imoveis = df[nome_coluna_endereco].dropna().unique().tolist()
+                imovel_selecionado = st.selectbox("Selecione o imóvel que deseja gerenciar:", [""] + lista_imoveis)
+                
+                if imovel_selecionado:
+                    linha_idx = df.index[df[nome_coluna_endereco] == imovel_selecionado].tolist()[0]
+                    dados_atuais = df.iloc[linha_idx]
+                    linha_real = linha_idx + 2  # Acha a linha exata no Sheets
+                    
+                    with st.form("form_editar_dados"):
+                        st.info(f"Editando dados do imóvel: **{imovel_selecionado}**")
+                        
+                        col_e1, col_e2 = st.columns(2)
+                        with col_e1:
+                            novo_status = st.selectbox("Status Atual", ["Disponível", "Em Negociação", "Alugado", "Vendido", "Suspenso"], 
+                                                       index=["Disponível", "Em Negociação", "Alugado", "Vendido", "Suspenso"].index(dados_atuais.iloc[11]) if dados_atuais.iloc[11] in ["Disponível", "Em Negociação", "Alugado", "Vendido", "Suspenso"] else 0)
+                            novo_valor = st.text_input("Valor Pretendido", value=str(dados_atuais.iloc[8]))
+                        with col_e2:
+                            novo_chaves = st.text_input("Localização das Chaves", value=str(dados_atuais.iloc[12]))
+                            novas_obs = st.text_area("Observações", value=str(dados_atuais.iloc[13]))
+                            
+                        btn_atualizar = st.form_submit_button("🔄 Confirmar Alterações", type="primary")
+                        
+                        if btn_atualizar:
+                            # As posições (12, 9, 13, 14) correspondem a: Status, Valor, Chaves, Obs na planilha (1-based)
+                            sheet.update_cell(linha_real, 12, novo_status)
+                            sheet.update_cell(linha_real, 9, novo_valor)
+                            sheet.update_cell(linha_real, 13, novo_chaves)
+                            sheet.update_cell(linha_real, 14, novas_obs)
+                            
+                            st.success("✅ Dados atualizados com sucesso!")
+                            st.rerun()
+                    
+                    # --- BLOCO DE EXCLUSÃO ---
+                    st.markdown("---")
+                    st.markdown("### ❌ Excluir Imóvel da Carteira")
+                    st.warning("Cuidado: Esta ação apagará permanentemente este imóvel do banco de dados (planilha).")
+                    
+                    # Trava de segurança
+                    confirmar_exclusao = st.checkbox("Tenho certeza que desejo excluir este registro")
+                    
+                    if confirmar_exclusao:
+                        if st.button("🗑️ Apagar Registro Definitivamente"):
+                            sheet.delete_row(linha_real)
+                            st.success("✅ Registro excluído com sucesso!")
+                            st.rerun()
+                            
+    except Exception as e:
+        st.error(f"Erro ao carregar módulo de edição: {e}")
