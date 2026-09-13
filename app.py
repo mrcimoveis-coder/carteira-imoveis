@@ -28,7 +28,7 @@ def conectar_google_sheets():
 # -----------------------------------------------------------------------------
 # CONTROLE DE ACESSO (SENHA DE PROTEÇÃO INTERNA)
 # -----------------------------------------------------------------------------
-SENHA_CORRETA = "mrc2026"  # Você pode alterar a senha interna aqui
+SENHA_CORRETA = "431360"  # Você pode alterar a senha interna aqui
 
 if "autenticado" not in st.session_state:
     st.session_state.autenticado = False
