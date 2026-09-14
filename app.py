@@ -10,7 +10,7 @@ from datetime import datetime
 st.set_page_config(page_title="Carteira de Imóveis | MRC Imóveis", page_icon="🏢", layout="wide")
 
 try:
-    st.image("https://raw.githubusercontent.com/mrcimoveis-coder/intranet/main/logo.jpeg", width=260)
+    st.image("https://raw.githubusercontent.com/mrcimoveis-coder/portal-intranet/main/logo.jpeg", width=260)
 except Exception:
     pass
 
@@ -23,14 +23,21 @@ SCOPES = [
 ]
 
 @st.cache_resource
-def conectar_google_sheets():
+def conectar_google_sheets(nome_aba=None):
     credenciais_dict = dict(st.secrets["gcp_service_account"])
     if "private_key" in credenciais_dict:
         credenciais_dict["private_key"] = credenciais_dict["private_key"].replace("\\n", "\n")
     
     credentials = Credentials.from_service_account_info(credenciais_dict, scopes=SCOPES)
     client = gspread.authorize(credentials)
-    return client.open_by_key("1yJBZZ0nDnJKsf31H6sfG_vve19TJIRfGIZ4ATCKQS7k").sheet1
+    spreadsheet = client.open_by_key("1yJBZZ0nDnJKsf31H6sfG_vve19TJIRfGIZ4ATCKQS7k")
+    
+    if nome_aba:
+        try:
+            return spreadsheet.worksheet(nome_aba)
+        except Exception:
+            return spreadsheet.add_worksheet(title=nome_aba, rows="200", cols="20")
+    return spreadsheet.sheet1
 
 # -----------------------------------------------------------------------------
 # CONTROLE DE ACESSO
@@ -63,15 +70,103 @@ except Exception as e:
 st.title("🏢 Carteira de Imóveis — Gestão Comercial")
 st.write("Centralização de acervo, proprietários e acompanhamento de negociações.")
 
-aba_cadastro, aba_consulta, aba_editar = st.tabs(["➕ Cadastrar Novo Imóvel", "🔍 Consultar e Pesquisar Carteira", "✏️ Editar e Excluir"])
+aba_triagem, aba_cadastro, aba_consulta, aba_editar = st.tabs([
+    "📥 Triagem / Novos Leads", 
+    "➕ Cadastrar Novo Imóvel", 
+    "🔍 Consultar e Pesquisar Carteira", 
+    "✏️ Editar e Excluir"
+])
 
 # -----------------------------------------------------------------------------
-# ABA 1: CADASTRAR NOVO IMÓVEL (PRESERVA DADOS SE HOUVER ERRO)
+# ABA 1: TRIAGEM DE LEADS VINDOS DO SITE (NOVO)
+# -----------------------------------------------------------------------------
+with aba_triagem:
+    st.subheader("📥 Imóveis Enviados pelo Site (Pendentes de Aprovação)")
+    st.caption("Verifique as informações enviadas pelos proprietários e aprove para mover o imóvel diretamente para a sua base principal.")
+
+    try:
+        sheet_leads = conectar_google_sheets("Leads_Captacao")
+        dados_leads_raw = sheet_leads.get_all_records()
+        
+        if not dados_leads_raw:
+            st.info("🎉 Nenhum lead pendente de triagem no momento!")
+        else:
+            df_leads = pd.DataFrame(dados_leads_raw)
+            st.write(f"**Total de novos imóveis aguardando revisão:** {len(df_leads)}")
+            st.markdown("---")
+
+            for idx_l, row_l in df_leads.iterrows():
+                linha_real_lead = idx_l + 2
+                
+                with st.expander(f"🔑 {row_l.get('Endereco_Imovel', 'Imóvel sem endereço')} — {row_l.get('Proprietario_Nome', 'Proprietário')} ({row_l.get('Finalidade', 'N/I')})", expanded=True):
+                    
+                    c1, c2, c3 = st.columns(3)
+                    c1.markdown(f"**👤 Proprietário:** {row_l.get('Proprietario_Nome', '')}")
+                    c1.markdown(f"**📱 Telefone:** {row_l.get('Proprietario_Telefone', '')}")
+                    c1.markdown(f"**✉️ E-mail:** {row_l.get('Proprietario_Email', '')}")
+
+                    c2.markdown(f"**📍 Endereço:** {row_l.get('Endereco_Imovel', '')}")
+                    c2.markdown(f"**🏢 Finalidade:** {row_l.get('Finalidade', '')}")
+                    c2.markdown(f"**💰 Valor Pretendido:** {row_l.get('Valor_Pretendido', '')}")
+
+                    c3.markdown(f"**🏢 Condomínio:** {row_l.get('Valor_Condominio', '')}")
+                    c3.markdown(f"**🏛️ IPTU:** {row_l.get('Valor_IPTU', '')}")
+                    c3.markdown(f"**🔑 Chaves:** {row_l.get('Chaves_Local', '')}")
+
+                    st.markdown(f"**📝 Observações do Form:** {row_l.get('Observacoes', '')}")
+                    st.markdown("---")
+
+                    btn_c1, btn_c2 = st.columns([2, 1])
+                    
+                    if btn_c1.button("✅ Aprovar e Mover para Carteira Oficial", key=f"btn_aprov_{idx_l}", type="primary"):
+                        try:
+                            # Prepara linha oficial na carteira
+                            nova_linha_oficial = [
+                                datetime.now().strftime("%d/%m/%Y %H:%M"),
+                                str(row_l.get('Proprietario_Nome', '')),
+                                str(row_l.get('Proprietario_Telefone', '')),
+                                str(row_l.get('Proprietario_Email', '')),
+                                str(row_l.get('Endereco_Imovel', '')),
+                                str(row_l.get('Bairro', 'A definir')),
+                                str(row_l.get('Tipo_Imovel', 'Apartamento')),
+                                str(row_l.get('Finalidade', 'Locação')),
+                                str(row_l.get('Valor_Pretendido', '')),
+                                str(row_l.get('Valor_Condominio', '')),
+                                str(row_l.get('Valor_IPTU', '')),
+                                "Disponível",
+                                str(row_l.get('Chaves_Local', '')),
+                                str(row_l.get('Observacoes', ''))
+                            ]
+                            
+                            sheet.append_row(nova_linha_oficial)
+                            sheet_leads.delete_rows(linha_real_lead)
+                            
+                            st.success(f"✅ Imóvel **{row_l.get('Endereco_Imovel', '')}** aprovado e inserido na carteira!")
+                            st.cache_data.clear()
+                            st.cache_resource.clear()
+                            st.rerun()
+                        except Exception as e_ap:
+                            st.error(f"Erro ao aprovar lead: {e_ap}")
+
+                    if btn_c2.button("🗑️ Descartar Lead", key=f"btn_desc_{idx_l}"):
+                        try:
+                            sheet_leads.delete_rows(linha_real_lead)
+                            st.warning("Lead descartado.")
+                            st.cache_data.clear()
+                            st.cache_resource.clear()
+                            st.rerun()
+                        except Exception as e_dc:
+                            st.error(f"Erro ao descartar lead: {e_dc}")
+
+    except Exception as e_tr:
+        st.error(f"Erro ao carregar triagem de leads: {e_tr}")
+
+# -----------------------------------------------------------------------------
+# ABA 2: CADASTRAR NOVO IMÓVEL
 # -----------------------------------------------------------------------------
 with aba_cadastro:
     st.subheader("Novo Cadastro Rápido")
     
-    # Mecanismo para limpar campos APENAS quando o cadastro for salvo com sucesso
     if st.session_state.get("reset_carteira_form", False):
         st.session_state["c_prop_nome"] = ""
         st.session_state["c_prop_tel"] = ""
@@ -113,7 +208,6 @@ with aba_cadastro:
         btn_salvar = st.form_submit_button("💾 Salvar na Carteira", type="primary")
 
     if btn_salvar:
-        # Mapeamento detalhado dos campos obrigatórios que faltam
         faltantes = []
         if not proprietario_nome:
             faltantes.append("Nome do Proprietário")
@@ -142,14 +236,13 @@ with aba_cadastro:
                 st.success("✅ Imóvel cadastrado com sucesso na planilha!")
                 st.balloons()
                 
-                # Marca para limpar o formulário na próxima renderização
                 st.session_state["reset_carteira_form"] = True
                 st.rerun()
             except Exception as e:
                 st.error(f"❌ Erro ao salvar dados: {e}")
 
 # -----------------------------------------------------------------------------
-# ABA 2: CONSULTAR E PESQUISAR CARTEIRA
+# ABA 3: CONSULTAR E PESQUISAR CARTEIRA
 # -----------------------------------------------------------------------------
 with aba_consulta:
     st.subheader("Consulta e Filtros de Imóveis")
@@ -205,7 +298,7 @@ with aba_consulta:
         st.error(f"❌ Erro ao carregar a carteira: {e}")
 
 # -----------------------------------------------------------------------------
-# ABA 3: EDIÇÃO E EXCLUSÃO
+# ABA 4: EDIÇÃO E EXCLUSÃO
 # -----------------------------------------------------------------------------
 with aba_editar:
     st.subheader("Alterar ou Excluir Registro")
@@ -250,7 +343,7 @@ with aba_editar:
                     
                     st.markdown("---")
                     st.markdown("### ❌ Excluir Imóvel da Carteira")
-                    st.warning("Cuidado: Esta ação apagará permanentemente este imóvel do banco de dados (planilha).")
+                    st.warning("Cuidado: Esta ação apagará permanentemente este imóvel do banco de dados.")
                     
                     confirmar_exclusao = st.checkbox("Tenho certeza que desejo excluir este registro")
                     
