@@ -181,7 +181,7 @@ with aba_consulta:
         st.error(f"❌ Erro ao carregar a carteira: {e}")
 
 # -----------------------------------------------------------------------------
-# ABA 3: EDIÇÃO E EXCLUSÃO (NOVO)
+# ABA 3: EDIÇÃO E EXCLUSÃO (CORRIGIDO)
 # -----------------------------------------------------------------------------
 with aba_editar:
     st.subheader("Alterar ou Excluir Registro")
@@ -191,10 +191,6 @@ with aba_editar:
         if dados_raw:
             df = pd.DataFrame(dados_raw)
             # Confirma se existe a coluna Endereço (baseado na estrutura do Cadastro Rápido)
-            # O get_all_records puxa os cabeçalhos como chaves. Precisamos ver o nome exato.
-            # Baseado no append_row, a coluna 5 é o Endereço (índice 4 no python)
-            # Mas o pandas usa o nome do cabeçalho. Vamos assumir que a coluna 5 se chama "Endereco_Imovel"
-            
             nome_coluna_endereco = df.columns[4] if len(df.columns) > 4 else None
             
             if nome_coluna_endereco:
@@ -239,10 +235,19 @@ with aba_editar:
                     confirmar_exclusao = st.checkbox("Tenho certeza que desejo excluir este registro")
                     
                     if confirmar_exclusao:
-                        if st.button("🗑️ Apagar Registro Definitivamente"):
-                            sheet.delete_row(linha_real)
-                            st.success("✅ Registro excluído com sucesso!")
-                            st.rerun()
+                        if st.button("🗑️ Apagar Registro Definitivamente", type="primary"):
+                            try:
+                                try:
+                                    sheet.delete_rows(linha_real)
+                                except AttributeError:
+                                    sheet.delete_row(linha_real)
+                                
+                                st.success("✅ Registro excluído com sucesso!")
+                                st.cache_data.clear()
+                                st.cache_resource.clear()
+                                st.rerun()
+                            except Exception as e_del:
+                                st.error(f"❌ Erro ao tentar excluir o imóvel: {e_del}")
                             
     except Exception as e:
         st.error(f"Erro ao carregar módulo de edição: {e}")
