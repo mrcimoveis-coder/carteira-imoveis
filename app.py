@@ -10,7 +10,7 @@ from datetime import datetime
 st.set_page_config(page_title="Carteira de Imóveis | MRC Imóveis", page_icon="🏢", layout="wide")
 
 try:
-    st.image("https://raw.githubusercontent.com/mrcimoveis-coder/portal-intranet/main/logo.jpeg", width=260)
+    st.image("https://raw.githubusercontent.com/mrcimoveis-coder/intranet/main/logo.jpeg", width=260)
 except Exception:
     pass
 
@@ -78,7 +78,7 @@ aba_triagem, aba_cadastro, aba_consulta, aba_editar = st.tabs([
 ])
 
 # -----------------------------------------------------------------------------
-# ABA 1: TRIAGEM DE LEADS VINDOS DO SITE (NOVO)
+# ABA 1: TRIAGEM DE LEADS VINDOS DO SITE
 # -----------------------------------------------------------------------------
 with aba_triagem:
     st.subheader("📥 Imóveis Enviados pelo Site (Pendentes de Aprovação)")
@@ -86,77 +86,109 @@ with aba_triagem:
 
     try:
         sheet_leads = conectar_google_sheets("Leads_Captacao")
-        dados_leads_raw = sheet_leads.get_all_records()
+        todos_valores = sheet_leads.get_all_values()
         
-        if not dados_leads_raw:
+        if not todos_valores:
             st.info("🎉 Nenhum lead pendente de triagem no momento!")
         else:
-            df_leads = pd.DataFrame(dados_leads_raw)
-            st.write(f"**Total de novos imóveis aguardando revisão:** {len(df_leads)}")
-            st.markdown("---")
+            primeira_linha = todos_valores[0]
+            if "Proprietario_Nome" in primeira_linha or "Endereco_Imovel" in primeira_linha:
+                header = primeira_linha
+                linhas_dados = todos_valores[1:]
+            else:
+                header = [
+                    "Data_Registro", "Proprietario_Nome", "Proprietario_Telefone", "Proprietario_Email",
+                    "Endereco_Imovel", "Bairro", "Tipo_Imovel", "Finalidade", "Valor_Pretendido",
+                    "Valor_Condominio", "Valor_IPTU", "Status", "Chaves_Local", "Observacoes"
+                ]
+                linhas_dados = todos_valores
 
-            for idx_l, row_l in df_leads.iterrows():
-                linha_real_lead = idx_l + 2
-                
-                with st.expander(f"🔑 {row_l.get('Endereco_Imovel', 'Imóvel sem endereço')} — {row_l.get('Proprietario_Nome', 'Proprietário')} ({row_l.get('Finalidade', 'N/I')})", expanded=True):
-                    
-                    c1, c2, c3 = st.columns(3)
-                    c1.markdown(f"**👤 Proprietário:** {row_l.get('Proprietario_Nome', '')}")
-                    c1.markdown(f"**📱 Telefone:** {row_l.get('Proprietario_Telefone', '')}")
-                    c1.markdown(f"**✉️ E-mail:** {row_l.get('Proprietario_Email', '')}")
+            if not linhas_dados:
+                st.info("🎉 Nenhum lead pendente de triagem no momento!")
+            else:
+                st.write(f"**Total de novos imóveis aguardando revisão:** {len(linhas_dados)}")
+                st.markdown("---")
 
-                    c2.markdown(f"**📍 Endereço:** {row_l.get('Endereco_Imovel', '')}")
-                    c2.markdown(f"**🏢 Finalidade:** {row_l.get('Finalidade', '')}")
-                    c2.markdown(f"**💰 Valor Pretendido:** {row_l.get('Valor_Pretendido', '')}")
+                for idx, row in enumerate(linhas_dados):
+                    def get_val(col_idx):
+                        if len(row) > col_idx and row[col_idx]:
+                            return row[col_idx]
+                        return "N/I"
 
-                    c3.markdown(f"**🏢 Condomínio:** {row_l.get('Valor_Condominio', '')}")
-                    c3.markdown(f"**🏛️ IPTU:** {row_l.get('Valor_IPTU', '')}")
-                    c3.markdown(f"**🔑 Chaves:** {row_l.get('Chaves_Local', '')}")
+                    data_reg = get_val(0)
+                    prop_nome = get_val(1)
+                    prop_tel = get_val(2)
+                    prop_email = get_val(3)
+                    end_imovel = get_val(4)
+                    bairro_lead = get_val(5)
+                    tipo_lead = get_val(6)
+                    fin_lead = get_val(7)
+                    val_pret = get_val(8)
+                    val_cond = get_val(9)
+                    val_iptu = get_val(10)
+                    status_lead = get_val(11)
+                    chaves_lead = get_val(12)
+                    obs_lead = get_val(13)
 
-                    st.markdown(f"**📝 Observações do Form:** {row_l.get('Observacoes', '')}")
-                    st.markdown("---")
+                    linha_real_lead = idx + (2 if header == primeira_linha else 1)
 
-                    btn_c1, btn_c2 = st.columns([2, 1])
-                    
-                    if btn_c1.button("✅ Aprovar e Mover para Carteira Oficial", key=f"btn_aprov_{idx_l}", type="primary"):
-                        try:
-                            # Prepara linha oficial na carteira
-                            nova_linha_oficial = [
-                                datetime.now().strftime("%d/%m/%Y %H:%M"),
-                                str(row_l.get('Proprietario_Nome', '')),
-                                str(row_l.get('Proprietario_Telefone', '')),
-                                str(row_l.get('Proprietario_Email', '')),
-                                str(row_l.get('Endereco_Imovel', '')),
-                                str(row_l.get('Bairro', 'A definir')),
-                                str(row_l.get('Tipo_Imovel', 'Apartamento')),
-                                str(row_l.get('Finalidade', 'Locação')),
-                                str(row_l.get('Valor_Pretendido', '')),
-                                str(row_l.get('Valor_Condominio', '')),
-                                str(row_l.get('Valor_IPTU', '')),
-                                "Disponível",
-                                str(row_l.get('Chaves_Local', '')),
-                                str(row_l.get('Observacoes', ''))
-                            ]
-                            
-                            sheet.append_row(nova_linha_oficial)
-                            sheet_leads.delete_rows(linha_real_lead)
-                            
-                            st.success(f"✅ Imóvel **{row_l.get('Endereco_Imovel', '')}** aprovado e inserido na carteira!")
-                            st.cache_data.clear()
-                            st.cache_resource.clear()
-                            st.rerun()
-                        except Exception as e_ap:
-                            st.error(f"Erro ao aprovar lead: {e_ap}")
+                    with st.expander(f"🔑 {end_imovel} — {prop_nome} ({fin_lead})", expanded=True):
+                        c1, c2, c3 = st.columns(3)
+                        c1.markdown(f"**👤 Proprietário:** {prop_nome}")
+                        c1.markdown(f"**📱 Telefone:** {prop_tel}")
+                        c1.markdown(f"**✉️ E-mail:** {prop_email}")
 
-                    if btn_c2.button("🗑️ Descartar Lead", key=f"btn_desc_{idx_l}"):
-                        try:
-                            sheet_leads.delete_rows(linha_real_lead)
-                            st.warning("Lead descartado.")
-                            st.cache_data.clear()
-                            st.cache_resource.clear()
-                            st.rerun()
-                        except Exception as e_dc:
-                            st.error(f"Erro ao descartar lead: {e_dc}")
+                        c2.markdown(f"**📍 Endereço:** {end_imovel}")
+                        c2.markdown(f"**🏢 Finalidade:** {fin_lead}")
+                        c2.markdown(f"**💰 Valor Pretendido:** {val_pret}")
+
+                        c3.markdown(f"**🏢 Condomínio:** {val_cond}")
+                        c3.markdown(f"**🏛️ IPTU:** {val_iptu}")
+                        c3.markdown(f"**🔑 Chaves:** {chaves_lead}")
+
+                        st.markdown(f"**📝 Observações do Form:** {obs_lead}")
+                        st.markdown("---")
+
+                        btn_c1, btn_c2 = st.columns([2, 1])
+                        
+                        if btn_c1.button("✅ Aprovar e Mover para Carteira Oficial", key=f"btn_aprov_{idx}", type="primary"):
+                            try:
+                                nova_linha_oficial = [
+                                    data_reg,
+                                    prop_nome,
+                                    prop_tel,
+                                    prop_email,
+                                    end_imovel,
+                                    bairro_lead if bairro_lead != "N/I" else "A definir",
+                                    tipo_lead if tipo_lead != "N/I" else "Apartamento",
+                                    fin_lead if fin_lead != "N/I" else "Locação",
+                                    val_pret if val_pret != "N/I" else "",
+                                    val_cond if val_cond != "N/I" else "",
+                                    val_iptu if val_iptu != "N/I" else "",
+                                    "Disponível",
+                                    chaves_lead if chaves_lead != "N/I" else "",
+                                    obs_lead if obs_lead != "N/I" else ""
+                                ]
+                                
+                                sheet.append_row(nova_linha_oficial)
+                                sheet_leads.delete_rows(linha_real_lead)
+                                
+                                st.success(f"✅ Imóvel **{end_imovel}** aprovado e inserido na carteira!")
+                                st.cache_data.clear()
+                                st.cache_resource.clear()
+                                st.rerun()
+                            except Exception as e_ap:
+                                st.error(f"Erro ao aprovar lead: {e_ap}")
+
+                        if btn_c2.button("🗑️ Descartar Lead", key=f"btn_desc_{idx}"):
+                            try:
+                                sheet_leads.delete_rows(linha_real_lead)
+                                st.warning("Lead descartado.")
+                                st.cache_data.clear()
+                                st.cache_resource.clear()
+                                st.rerun()
+                            except Exception as e_dc:
+                                st.error(f"Erro ao descartar lead: {e_dc}")
 
     except Exception as e_tr:
         st.error(f"Erro ao carregar triagem de leads: {e_tr}")
