@@ -3,14 +3,18 @@ import pandas as pd
 import gspread
 from google.oauth2.service_account import Credentials
 from datetime import datetime
+from decimal import Decimal, InvalidOperation
+import unicodedata
 
 # -----------------------------------------------------------------------------
 # CONFIGURAÇÃO DA PÁGINA E LOGOMARCA
 # -----------------------------------------------------------------------------
 st.set_page_config(page_title="Carteira de Imóveis | MRC Imóveis", page_icon="🏢", layout="wide")
 
+LOGO_URL = "https://raw.githubusercontent.com/mrcimoveis-coder/portal-intranet/main/logo.jpeg"
+
 try:
-    st.image("https://raw.githubusercontent.com/mrcimoveis-coder/intranet/main/logo.jpeg", width=260)
+    st.image(LOGO_URL, width=260)
 except Exception:
     pass
 
@@ -42,7 +46,7 @@ def conectar_google_sheets(nome_aba=None):
 # -----------------------------------------------------------------------------
 # CONTROLE DE ACESSO
 # -----------------------------------------------------------------------------
-SENHA_CORRETA = "431360"
+SENHA_CORRETA = "431220"
 
 if "autenticado" not in st.session_state:
     st.session_state.autenticado = False
@@ -70,11 +74,58 @@ except Exception as e:
 st.title("🏢 Carteira de Imóveis — Gestão Comercial")
 st.write("Centralização de acervo, proprietários e acompanhamento de negociações.")
 
+def normalizar_busca(valor):
+    texto = unicodedata.normalize("NFKD", str(valor or ""))
+    texto_sem_acentos = "".join(caractere for caractere in texto if not unicodedata.combining(caractere))
+    return texto_sem_acentos.casefold().strip()
+
+def formatar_moeda_brl(valor):
+    """Formata números e textos monetários sem reinterpretar ponto de milhar como decimal."""
+    if valor is None or str(valor).strip() == "":
+        return ""
+    original = str(valor).strip()
+    limpo = original.upper().replace("R$", "").replace("\xa0", "").replace(" ", "")
+
+    if "," in limpo:
+        normalizado = limpo.replace(".", "").replace(",", ".")
+    elif limpo.count(".") > 1:
+        normalizado = limpo.replace(".", "")
+    elif limpo.count(".") == 1:
+        inteiro, decimal = limpo.split(".", 1)
+        normalizado = inteiro + decimal if len(decimal) == 3 else limpo
+    else:
+        normalizado = limpo
+
+    try:
+        numero = Decimal(normalizado)
+    except (InvalidOperation, ValueError):
+        return original
+
+    return f"R$ {numero:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+def carregar_carteira_com_linhas(sheet_carteira):
+    """Lê os valores como aparecem no Sheets e conserva a linha real para edição segura."""
+    valores = sheet_carteira.get_all_values()
+    if not valores:
+        return pd.DataFrame()
+
+    cabecalho = valores[0]
+    registros = []
+    for linha_planilha, linha in enumerate(valores[1:], start=2):
+        linha_completa = list(linha) + [""] * max(0, len(cabecalho) - len(linha))
+        linha_completa = linha_completa[:len(cabecalho)]
+        if not any(str(valor).strip() for valor in linha_completa):
+            continue
+        registro = dict(zip(cabecalho, linha_completa))
+        registro["_linha_planilha"] = linha_planilha
+        registros.append(registro)
+    return pd.DataFrame(registros)
+
 aba_triagem, aba_cadastro, aba_consulta, aba_editar = st.tabs([
     "📥 Triagem / Novos Leads", 
     "➕ Cadastrar Novo Imóvel", 
     "🔍 Consultar e Pesquisar Carteira", 
-    "✏️ Editar e Excluir"
+    "✏️ Editar Imóvel"
 ])
 
 # -----------------------------------------------------------------------------
@@ -267,7 +318,7 @@ with aba_cadastro:
                 sheet.append_row(nova_linha)
                 st.success("✅ Imóvel cadastrado com sucesso na planilha!")
                 st.balloons()
-                
+
                 st.session_state["reset_carteira_form"] = True
                 st.rerun()
             except Exception as e:
@@ -280,12 +331,10 @@ with aba_consulta:
     st.subheader("Consulta e Filtros de Imóveis")
     
     try:
-        dados_raw = sheet.get_all_records()
-        if not dados_raw:
+        df = carregar_carteira_com_linhas(sheet)
+        if df.empty:
             st.info("Nenhum imóvel cadastrado na carteira até o momento.")
         else:
-            df = pd.DataFrame(dados_raw)
-
             col_f1, col_f2, col_f3 = st.columns(3)
             with col_f1:
                 busca_texto = st.text_input("🔎 Pesquisar (Nome, Endereço ou Bairro):")
@@ -309,16 +358,25 @@ with aba_consulta:
                 df_filtrado = df
 
             if busca_texto:
-                termo = busca_texto.lower()
+                termo = normalizar_busca(busca_texto)
                 cols_busca = [col for col in ["Proprietario_Nome", "Endereco_Imovel", "Bairro"] if col in df.columns]
-                
+
                 if cols_busca:
-                    df_filtrado = df_filtrado[df_filtrado[cols_busca].apply(lambda row: row.astype(str).str.lower().str.contains(termo).any(), axis=1)]
+                    mascara = df_filtrado[cols_busca].apply(
+                        lambda row: any(termo in normalizar_busca(valor) for valor in row),
+                        axis=1,
+                    )
+                    df_filtrado = df_filtrado[mascara]
 
             st.write(f"**Total de Imóveis encontrados:** {len(df_filtrado)}")
-            
+
+            df_exibicao = df_filtrado.drop(columns=["_linha_planilha"], errors="ignore").copy()
+            for coluna_valor in ["Valor_Pretendido", "Valor_Condominio", "Valor_IPTU"]:
+                if coluna_valor in df_exibicao.columns:
+                    df_exibicao[coluna_valor] = df_exibicao[coluna_valor].apply(formatar_moeda_brl)
+
             st.dataframe(
-                df_filtrado,
+                df_exibicao,
                 column_config={
                     "Proprietario_Telefone": st.column_config.LinkColumn("Telefone", display_text=r"📱 (61) .*"),
                 },
@@ -333,66 +391,88 @@ with aba_consulta:
 # ABA 4: EDIÇÃO E EXCLUSÃO
 # -----------------------------------------------------------------------------
 with aba_editar:
-    st.subheader("Alterar ou Excluir Registro")
+    st.subheader("Alterar Dados do Imóvel")
+    st.caption("As alterações feitas nesta área apenas atualizam o imóvel. Nenhum registro será excluído ao confirmar uma edição.")
+
+    if st.session_state.pop("carteira_edicao_sucesso", False):
+        st.success("✅ Dados atualizados com sucesso!")
     
     try:
-        dados_raw = sheet.get_all_records()
-        if dados_raw:
-            df = pd.DataFrame(dados_raw)
-            nome_coluna_endereco = df.columns[4] if len(df.columns) > 4 else None
-            
+        df = carregar_carteira_com_linhas(sheet)
+        if not df.empty:
+            nome_coluna_endereco = "Endereco_Imovel" if "Endereco_Imovel" in df.columns else None
+
             if nome_coluna_endereco:
-                lista_imoveis = df[nome_coluna_endereco].dropna().unique().tolist()
-                imovel_selecionado = st.selectbox("Selecione o imóvel que deseja gerenciar:", [""] + lista_imoveis)
-                
-                if imovel_selecionado:
-                    linha_idx = df.index[df[nome_coluna_endereco] == imovel_selecionado].tolist()[0]
-                    dados_atuais = df.iloc[linha_idx]
-                    linha_real = linha_idx + 2
-                    
+                indices_imoveis = df.index[df[nome_coluna_endereco].astype(str).str.strip() != ""].tolist()
+
+                def rotulo_imovel(indice):
+                    if indice is None:
+                        return "Selecione um imóvel"
+                    endereco = str(df.at[indice, nome_coluna_endereco])
+                    proprietario = str(df.at[indice, "Proprietario_Nome"]) if "Proprietario_Nome" in df.columns else ""
+                    return f"{endereco} — {proprietario}" if proprietario else endereco
+
+                imovel_selecionado = st.selectbox(
+                    "Selecione o imóvel que deseja editar:",
+                    [None] + indices_imoveis,
+                    format_func=rotulo_imovel,
+                )
+
+                if imovel_selecionado is not None:
+                    dados_atuais = df.loc[imovel_selecionado]
+                    linha_real = int(dados_atuais["_linha_planilha"])
+                    endereco_selecionado = str(dados_atuais[nome_coluna_endereco])
+                    cabecalho_planilha = sheet.row_values(1)
+                    colunas_planilha = {nome: indice + 1 for indice, nome in enumerate(cabecalho_planilha)}
+
                     with st.form("form_editar_dados"):
-                        st.info(f"Editando dados do imóvel: **{imovel_selecionado}**")
-                        
+                        st.info(f"Editando dados do imóvel: **{endereco_selecionado}**")
+
                         col_e1, col_e2 = st.columns(2)
                         with col_e1:
                             novo_status = st.selectbox("Status Atual", ["Disponível", "Em Negociação", "Alugado", "Vendido", "Suspenso"], 
-                                                       index=["Disponível", "Em Negociação", "Alugado", "Vendido", "Suspenso"].index(dados_atuais.iloc[11]) if dados_atuais.iloc[11] in ["Disponível", "Em Negociação", "Alugado", "Vendido", "Suspenso"] else 0)
-                            novo_valor = st.text_input("Valor Pretendido", value=str(dados_atuais.iloc[8]))
+                                                       index=["Disponível", "Em Negociação", "Alugado", "Vendido", "Suspenso"].index(dados_atuais.get("Status", "")) if dados_atuais.get("Status", "") in ["Disponível", "Em Negociação", "Alugado", "Vendido", "Suspenso"] else 0)
+                            novo_valor = st.text_input("Valor Pretendido", value=str(dados_atuais.get("Valor_Pretendido", "")))
                         with col_e2:
-                            novo_chaves = st.text_input("Localização das Chaves", value=str(dados_atuais.iloc[12]))
-                            novas_obs = st.text_area("Observações", value=str(dados_atuais.iloc[13]))
+                            novo_chaves = st.text_input("Localização das Chaves", value=str(dados_atuais.get("Chaves_Local", "")))
+                            novas_obs = st.text_area("Observações", value=str(dados_atuais.get("Observacoes", "")))
                             
                         btn_atualizar = st.form_submit_button("🔄 Confirmar Alterações", type="primary")
                         
                         if btn_atualizar:
-                            sheet.update_cell(linha_real, 12, novo_status)
-                            sheet.update_cell(linha_real, 9, novo_valor)
-                            sheet.update_cell(linha_real, 13, novo_chaves)
-                            sheet.update_cell(linha_real, 14, novas_obs)
-                            
-                            st.success("✅ Dados atualizados com sucesso!")
+                            campos_atualizados = {
+                                "Status": novo_status,
+                                "Valor_Pretendido": novo_valor,
+                                "Chaves_Local": novo_chaves,
+                                "Observacoes": novas_obs,
+                            }
+                            for nome_coluna, novo_conteudo in campos_atualizados.items():
+                                if nome_coluna not in colunas_planilha:
+                                    raise ValueError(f"Coluna obrigatória não encontrada: {nome_coluna}")
+                                sheet.update_cell(linha_real, colunas_planilha[nome_coluna], novo_conteudo)
+
+                            st.session_state["carteira_edicao_sucesso"] = True
                             st.rerun()
-                    
-                    st.markdown("---")
-                    st.markdown("### ❌ Excluir Imóvel da Carteira")
-                    st.warning("Cuidado: Esta ação apagará permanentemente este imóvel do banco de dados.")
-                    
-                    confirmar_exclusao = st.checkbox("Tenho certeza que desejo excluir este registro")
-                    
-                    if confirmar_exclusao:
-                        if st.button("🗑️ Apagar Registro Definitivamente", type="primary"):
-                            try:
+
+                    with st.expander("🗑️ Excluir este imóvel (ação separada)", expanded=False):
+                        st.warning("Somente o botão abaixo exclui o imóvel. Confirmar alterações no formulário acima não apaga o registro.")
+                        confirmar_exclusao = st.checkbox(
+                            "Tenho certeza que desejo excluir este registro definitivamente",
+                            key=f"confirmar_exclusao_{linha_real}",
+                        )
+
+                        if confirmar_exclusao:
+                            if st.button("🗑️ Apagar Registro Definitivamente", type="primary", key=f"excluir_{linha_real}"):
                                 try:
-                                    sheet.delete_rows(linha_real)
-                                except AttributeError:
-                                    sheet.delete_row(linha_real)
-                                
-                                st.success("✅ Registro excluído com sucesso!")
-                                st.cache_data.clear()
-                                st.cache_resource.clear()
-                                st.rerun()
-                            except Exception as e_del:
-                                st.error(f"❌ Erro ao tentar excluir o imóvel: {e_del}")
+                                    try:
+                                        sheet.delete_rows(linha_real)
+                                    except AttributeError:
+                                        sheet.delete_row(linha_real)
+
+                                    st.success("✅ Registro excluído com sucesso!")
+                                    st.rerun()
+                                except Exception as e_del:
+                                    st.error(f"❌ Erro ao tentar excluir o imóvel: {e_del}")
                             
     except Exception as e:
         st.error(f"Erro ao carregar módulo de edição: {e}")
